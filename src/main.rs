@@ -1,7 +1,15 @@
+#![warn(clippy::nursery, clippy::pedantic)]
+#![allow(
+    clippy::too_many_lines,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate
+)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::env;
+use std::fmt::Write as _;
 use std::sync::OnceLock;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -144,40 +152,82 @@ async fn check_instruments(
     let mut cont = String::new();
     cont.push_str("top 15 kurse (nach rel. veränderung)\n");
     for inst in &instruments[..15] {
-        cont.push_str(&format!(
-            "`* {} ({}% [{}€]) ({}% 1h, {}% 2h, {}% 4h)`\n",
+        let _ = writeln!(
+            cont,
+            "`* {} ({}% [{}€]) ({}% 1h, {}% 2h, {}% 4h)`",
             inst.name,
             inst.performance_rel,
             inst.performance_abs,
-
-            cache_1h.as_ref().map(|c| c.get(&inst.id_external.parse().unwrap()).unwrap().performance_rel.to_string()).unwrap_or_else(|| "?".to_string()),
-            cache_2h.as_ref().map(|c| c.get(&inst.id_external.parse().unwrap()).unwrap().performance_rel.to_string()).unwrap_or_else(|| "?".to_string()),
-            cache_4h.as_ref().map(|c| c.get(&inst.id_external.parse().unwrap()).unwrap().performance_rel.to_string()).unwrap_or_else(|| "?".to_string()),
-        ));
+            cache_1h.as_ref().map_or_else(
+                || "?".to_string(),
+                |c| c
+                    .get(&inst.id_external.parse().unwrap())
+                    .unwrap()
+                    .performance_rel
+                    .to_string()
+            ),
+            cache_2h.as_ref().map_or_else(
+                || "?".to_string(),
+                |c| c
+                    .get(&inst.id_external.parse().unwrap())
+                    .unwrap()
+                    .performance_rel
+                    .to_string()
+            ),
+            cache_4h.as_ref().map_or_else(
+                || "?".to_string(),
+                |c| c
+                    .get(&inst.id_external.parse().unwrap())
+                    .unwrap()
+                    .performance_rel
+                    .to_string()
+            ),
+        );
     }
 
-    cont.push_str("\n");
+    cont.push('\n');
 
     instruments.reverse();
     cont.push_str("bottom 10 kurse (nach rel. veränderung)\n");
     for inst in &instruments[..10] {
-        cont.push_str(&format!(
-            "`* {} ({}% [{}€]) ({}% vor 1h, {}% vor 2h, {}% vor 4h)`\n",
+        let _ = writeln!(
+            cont,
+            "`* {} ({}% [{}€]) ({}% vor 1h, {}% vor 2h, {}% vor 4h)`",
             inst.name,
             inst.performance_rel,
             inst.performance_abs,
-
-            cache_1h.as_ref().map(|c| c.get(&inst.id_external.parse().unwrap()).unwrap().performance_rel.to_string()).unwrap_or_else(|| "?".to_string()),
-            cache_2h.as_ref().map(|c| c.get(&inst.id_external.parse().unwrap()).unwrap().performance_rel.to_string()).unwrap_or_else(|| "?".to_string()),
-            cache_4h.as_ref().map(|c| c.get(&inst.id_external.parse().unwrap()).unwrap().performance_rel.to_string()).unwrap_or_else(|| "?".to_string()),
-        ));
+            cache_1h.as_ref().map_or_else(
+                || "?".to_string(),
+                |c| c
+                    .get(&inst.id_external.parse().unwrap())
+                    .unwrap()
+                    .performance_rel
+                    .to_string()
+            ),
+            cache_2h.as_ref().map_or_else(
+                || "?".to_string(),
+                |c| c
+                    .get(&inst.id_external.parse().unwrap())
+                    .unwrap()
+                    .performance_rel
+                    .to_string()
+            ),
+            cache_4h.as_ref().map_or_else(
+                || "?".to_string(),
+                |c| c
+                    .get(&inst.id_external.parse().unwrap())
+                    .unwrap()
+                    .performance_rel
+                    .to_string()
+            ),
+        );
     }
 
-    cont.push_str(&format!("\n\naktualisiert: <t:{}>", current_unix_time()));
+    let _ = write!(cont, "\n\naktualisiert: <t:{}>", current_unix_time());
 
     if let Err(e) = webhook(cont.clone(), Some(rel_message_id)).await {
         eprintln!("webhook error: {e:?}");
-    };
+    }
 
     // *****************************
 
@@ -192,20 +242,20 @@ async fn check_instruments(
 
             let diff = ins.performance_rel - old.performance_rel;
 
-            instruments_rel_rel_perf.push((ins.id_external.parse::<u64>().unwrap(), diff))
+            instruments_rel_rel_perf.push((ins.id_external.parse::<u64>().unwrap(), diff));
         }
 
-        instruments_rel_rel_perf.sort_by(|(_, i), (_, j)| j.total_cmp(&i));
+        instruments_rel_rel_perf.sort_by(|(_, i), (_, j)| j.total_cmp(i));
 
         cont.clear();
         cont.push_str("top 20 kurse (nach diff. in rel. veränderung vor 2h)\n");
 
         for (id, diff) in &instruments_rel_rel_perf[..20] {
             let ins = cache.get(id).unwrap();
-            cont.push_str(&format!("`* {} (Δ: {}%)`\n", ins.name, diff))
+            let _ = writeln!(cont, "`* {} (Δ: {}%)`", ins.name, diff);
         }
 
-        cont.push_str(&format!("\n\naktualisiert: <t:{}>", current_unix_time()));
+        let _ = write!(cont, "\n\naktualisiert: <t:{}>", current_unix_time());
 
         if let Err(e) = webhook(cont.clone(), Some(perf_diff_message_id)).await {
             eprintln!("webhook error: {e:?}");
@@ -216,7 +266,7 @@ async fn check_instruments(
 async fn check_leaderboard(client: &reqwest::Client, message_id: u64) {
     let res: serde_json::Value = match client
         .post(RANKING_URL)
-        .json(&json!({"additionalRanking": false, "filter": "COUNTRY", "name": "", "page": 0, "pageSize": 100000000, "periodDetail": 278, "periodType": "TOTAL", "periodYear": 2025, "phaseId": "1", "rankingColumn": "PERFORMANCE"}))
+        .json(&json!({"additionalRanking": false, "filter": "COUNTRY", "name": "", "page": 0, "pageSize": i32::MAX, "periodDetail": 278, "periodType": "TOTAL", "periodYear": 2025, "phaseId": "1", "rankingColumn": "PERFORMANCE"}))
         .bearer_auth(PSB_TOKEN.get().unwrap())
         .send()
         .await {
@@ -243,35 +293,37 @@ async fn check_leaderboard(client: &reqwest::Client, message_id: u64) {
     let mut cont = String::new();
     cont.push_str("top 10 teams (nach depot)\n");
     for team in &ranking[..10] {
-        cont.push_str(&format!(
-            "`* {} ({}€, #{} / {}%)`\n",
+        let _ = writeln!(
+            cont,
+            "`* {} ({}€, #{} / {}%)`",
             team.name.replace("* (Name not yet approved)", "<kein>"),
             team.depot_value,
             team.performance_rank,
             team.performance,
-        ));
+        );
     }
 
-    cont.push_str("\n");
+    cont.push('\n');
 
     ranking.reverse();
     cont.push_str("bottom 10 teams (nach depot)\n");
     for team in &ranking[..10] {
-        cont.push_str(&format!(
-            "`* {} ({}€, #{} / {}%)`\n",
+        let _ = writeln!(
+            cont,
+            "`* {} ({}€, #{} / {}%)`",
             team.name.replace("* (Name not yet approved)", "<kein>"),
             team.depot_value,
             team.performance_rank,
             team.performance,
-        ));
+        );
     }
 
-    cont.push_str(&format!("\n({ranking_total_elements} teams insgesamt)"));
-    cont.push_str(&format!("\n\naktualisiert: <t:{}>", current_unix_time()));
+    let _ = write!(cont, "\n({ranking_total_elements} teams insgesamt)");
+    let _ = write!(cont, "\n\naktualisiert: <t:{}>", current_unix_time());
 
     if let Err(e) = webhook(cont.clone(), Some(message_id)).await {
         eprintln!("webhook error: {e:?}");
-    };
+    }
 }
 
 async fn watcher() {
@@ -286,13 +338,14 @@ async fn watcher() {
             .expect("failed to init webhook")
     };
 
-    let instrument_perf_diff_message_id = if let Ok(msg_id) = env::var("DISCORD_INSTRUMENT_PERF_DIFF_MSG_ID") {
-        msg_id.parse().unwrap()
-    } else {
-        webhook("tmp".to_string(), None)
-            .await
-            .expect("failed to init webhook")
-    };
+    let instrument_perf_diff_message_id =
+        if let Ok(msg_id) = env::var("DISCORD_INSTRUMENT_PERF_DIFF_MSG_ID") {
+            msg_id.parse().unwrap()
+        } else {
+            webhook("tmp".to_string(), None)
+                .await
+                .expect("failed to init webhook")
+        };
 
     let teams_message_id = if let Ok(msg_id) = env::var("DISCORD_TEAMS_MSG_ID") {
         msg_id.parse().unwrap()
