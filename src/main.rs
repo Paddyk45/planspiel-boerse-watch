@@ -141,7 +141,6 @@ async fn check_instruments(
         None
     };
 
-    // forge
     let mut cont = String::new();
     cont.push_str("top 15 kurse (nach rel. veränderung)\n");
     for inst in &instruments[..15] {
