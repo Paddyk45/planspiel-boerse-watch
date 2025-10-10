@@ -126,13 +126,13 @@ async fn check_instruments(
     instrument_cache.push(hm);
 
     let len = instrument_cache.len();
-    let cache_1h = if len >= 4 {
+    let cache_1h = if len > 4 {
         Some(instrument_cache.get(len - 4 - 1).unwrap().clone())
     } else {
         None
     };
 
-    let cache_2h = if len >= 8 {
+    let cache_2h = if len > 8 {
         Some(instrument_cache.get(len - 8 - 1).unwrap().clone())
     } else {
         None
