@@ -69,9 +69,8 @@ struct Instrument {
     performance_rel: f32,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-#[derive(Debug)]
 struct Team {
     name: String,
     depot_value: f32,
