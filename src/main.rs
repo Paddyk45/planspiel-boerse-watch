@@ -5,6 +5,8 @@
     clippy::must_use_candidate
 )]
 
+use anyhow::bail;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -88,26 +90,20 @@ async fn check_instruments(
     instrument_cache: &mut Vec<HashMap<u64, Instrument>>,
     rel_message_id: u64,
     perf_diff_message_id: u64,
-) {
-    let res: serde_json::Value = match client
+) -> anyhow::Result<()> {
+    let res = client
         .get(MARKET_URL)
         .bearer_auth(PSB_TOKEN.get().unwrap())
         .send()
-        .await
-    {
-        Ok(res) => {
-            let Ok(j) = res.json().await else {
-                eprintln!("failed to parse json");
-                return;
-            };
+        .await?;
 
-            j
-        }
-        Err(e) => {
-            eprintln!("response error: {e}");
-            return;
-        }
-    };
+    if res.status() == StatusCode::UNAUTHORIZED {
+        panic!("bad or expired psb token");
+    } else if !res.status().is_success() {
+        bail!("psb returned bad status {}", res.status());
+    }
+
+    let res: serde_json::Value = res.json().await?;
 
     let mut instruments: Vec<Instrument> = vec![];
     for idx in res.as_array().unwrap() {
@@ -122,10 +118,9 @@ async fn check_instruments(
     instruments.sort_by(|i, j| j.performance_rel.total_cmp(&i.performance_rel));
     instruments.dedup_by(|i, j| i.wkn == j.wkn);
 
-    // result store
     let mut hm = HashMap::new();
     for ins in &instruments {
-        hm.insert(ins.id_external.parse().unwrap(), ins.clone());
+        hm.insert(ins.id_external.parse()?, ins.clone());
     }
 
     instrument_cache.push(hm);
@@ -155,7 +150,11 @@ async fn check_instruments(
         let _ = writeln!(
             cont,
             "`* {} ({}% [{}€]) ({}% 1h, {}% 2h, {}% 4h)`",
-            inst.name,
+            inst.name
+                .split_whitespace()
+                .map(String::from)
+                .collect::<Vec<String>>()[..]
+                .join(" "),
             inst.performance_rel,
             inst.performance_abs,
             cache_1h.as_ref().map_or_else(
@@ -193,7 +192,11 @@ async fn check_instruments(
         let _ = writeln!(
             cont,
             "`* {} ({}% [{}€]) ({}% vor 1h, {}% vor 2h, {}% vor 4h)`",
-            inst.name,
+            inst.name
+                .split_whitespace()
+                .map(String::from)
+                .collect::<Vec<String>>()[..]
+                .join(" "),
             inst.performance_rel,
             inst.performance_abs,
             cache_1h.as_ref().map_or_else(
@@ -225,68 +228,64 @@ async fn check_instruments(
 
     let _ = write!(cont, "\n\naktualisiert: <t:{}>", current_unix_time());
 
-    if let Err(e) = webhook(cont.clone(), Some(rel_message_id)).await {
-        eprintln!("webhook error: {e:?}");
-    }
+    webhook(cont.clone(), Some(rel_message_id)).await?;
 
     // *****************************
 
     cont.clear();
 
-    if let Some(cache) = cache_2h {
-        let mut instruments_rel_rel_perf = vec![];
-        for ins in instruments {
-            let Some(old) = cache.get(&ins.id_external.parse().unwrap()) else {
-                continue;
-            };
+    let Some(cache) = cache_2h else {
+        return Ok(()); // not enough data, we are done here
+    };
 
-            let diff = ins.performance_rel - old.performance_rel;
+    let mut instruments_rel_rel_perf = vec![];
+    for ins in instruments {
+        let Some(old) = cache.get(&ins.id_external.parse()?) else {
+            continue;
+        };
 
-            instruments_rel_rel_perf.push((ins.id_external.parse::<u64>().unwrap(), diff));
-        }
+        let diff = ins.performance_rel - old.performance_rel;
 
-        instruments_rel_rel_perf.sort_by(|(_, i), (_, j)| j.total_cmp(i));
-
-        cont.clear();
-        cont.push_str("top 20 kurse (nach diff. in rel. veränderung vor 2h)\n");
-
-        for (id, diff) in &instruments_rel_rel_perf[..20] {
-            let ins = cache.get(id).unwrap();
-            let _ = writeln!(cont, "`* {} (Δ: {}%)`", ins.name, diff);
-        }
-
-        let _ = write!(cont, "\n\naktualisiert: <t:{}>", current_unix_time());
-
-        if let Err(e) = webhook(cont.clone(), Some(perf_diff_message_id)).await {
-            eprintln!("webhook error: {e:?}");
-        }
+        instruments_rel_rel_perf.push((ins.id_external.parse::<u64>()?, diff));
     }
+
+    instruments_rel_rel_perf.sort_by(|(_, i), (_, j)| j.total_cmp(i));
+
+    cont.clear();
+    cont.push_str("top 20 kurse (nach diff. in rel. veränderung vor 2h)\n");
+
+    for (id, diff) in &instruments_rel_rel_perf[..20] {
+        let ins = cache.get(id).unwrap();
+        let _ = writeln!(cont, "`* {} (Δ: {}%)`", ins.name, diff);
+    }
+
+    let _ = write!(cont, "\n\naktualisiert: <t:{}>", current_unix_time());
+
+    webhook(cont.clone(), Some(perf_diff_message_id)).await?;
+
+    Ok(())
 }
 
-async fn check_leaderboard(client: &reqwest::Client, message_id: u64) {
-    let res: serde_json::Value = match client
+async fn check_leaderboard(client: &reqwest::Client, message_id: u64) -> anyhow::Result<()> {
+    let res = client
         .post(RANKING_URL)
-        .json(&json!({"additionalRanking": false, "filter": "COUNTRY", "name": "", "page": 0, "pageSize": i32::MAX, "periodDetail": 278, "periodType": "TOTAL", "periodYear": 2025, "phaseId": "1", "rankingColumn": "PERFORMANCE"}))
+        .json(&json!({"additionalRanking": false, "filter": "COUNTRY", "name": "", "page": 0, "pageSize": 60_000, "periodDetail": 278, "periodType": "TOTAL", "periodYear": 2025, "phaseId": "1", "rankingColumn": "PERFORMANCE"}))
         .bearer_auth(PSB_TOKEN.get().unwrap())
         .send()
-        .await {
-        Ok(res) => {
-            let Ok(j) = res.json().await else {
-                eprintln!("failed to parse json");
-                return;
-            };
+        .await?;
 
-            j
-        },
-        Err(e) => {
-            eprintln!("{e}");
-            return;
-        }
-    };
+    // we already checked the token validity but lets be sure...
+    if res.status() == StatusCode::UNAUTHORIZED {
+        panic!("bad or expired psb token");
+    } else if !res.status().is_success() {
+        bail!("psb returned bad status {}", res.status());
+    }
+
+    let res: serde_json::Value = res.json().await?;
 
     let ranking_total_elements: u64 = res["totalElements"].as_number().unwrap().as_u64().unwrap();
 
-    let mut ranking: Vec<Team> = serde_json::from_value(res["content"].clone()).unwrap();
+    let mut ranking: Vec<Team> = serde_json::from_value(res["content"].clone())?;
 
     ranking.sort_by(|r, s| s.depot_value.total_cmp(&r.depot_value));
 
@@ -321,9 +320,9 @@ async fn check_leaderboard(client: &reqwest::Client, message_id: u64) {
     let _ = write!(cont, "\n({ranking_total_elements} teams insgesamt)");
     let _ = write!(cont, "\n\naktualisiert: <t:{}>", current_unix_time());
 
-    if let Err(e) = webhook(cont.clone(), Some(message_id)).await {
-        eprintln!("webhook error: {e:?}");
-    }
+    webhook(cont.clone(), Some(message_id)).await?;
+
+    Ok(())
 }
 
 async fn watcher() {
@@ -355,25 +354,37 @@ async fn watcher() {
             .expect("failed to init webhook")
     };
 
-    check_instruments(
+    if let Err(e) = check_instruments(
         &client,
         &mut instrument_cache,
         instrument_message_id,
         instrument_perf_diff_message_id,
     )
-    .await;
-    check_leaderboard(&client, teams_message_id).await;
+    .await
+    {
+        println!("check_instruments failed: {e:?}");
+    }
+
+    if let Err(e) = check_leaderboard(&client, teams_message_id).await {
+        println!("check_leaderboard failed: {e:?}");
+    }
 
     loop {
         tokio::time::sleep(Duration::from_secs(INTERVAL)).await;
 
-        check_instruments(
+        if let Err(e) = check_instruments(
             &client,
             &mut instrument_cache,
             instrument_message_id,
             instrument_perf_diff_message_id,
         )
-        .await;
-        check_leaderboard(&client, teams_message_id).await;
+        .await
+        {
+            println!("check_instruments failed: {e:?}");
+        }
+
+        if let Err(e) = check_leaderboard(&client, teams_message_id).await {
+            println!("check_leaderboard failed: {e:?}");
+        }
     }
 }
