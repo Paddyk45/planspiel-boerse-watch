@@ -160,25 +160,19 @@ async fn check_instruments(
                 || "?".to_string(),
                 |c| c
                     .get(&inst.id_external.parse().unwrap())
-                    .unwrap()
-                    .performance_rel
-                    .to_string()
+                    .map_or_else(|| "?".to_string(), |i| i.performance_rel.to_string())
             ),
             cache_2h.as_ref().map_or_else(
                 || "?".to_string(),
                 |c| c
                     .get(&inst.id_external.parse().unwrap())
-                    .unwrap()
-                    .performance_rel
-                    .to_string()
+                    .map_or_else(|| "?".to_string(), |i| i.performance_rel.to_string())
             ),
             cache_4h.as_ref().map_or_else(
                 || "?".to_string(),
                 |c| c
                     .get(&inst.id_external.parse().unwrap())
-                    .unwrap()
-                    .performance_rel
-                    .to_string()
+                    .map_or_else(|| "?".to_string(), |i| i.performance_rel.to_string())
             ),
         );
     }
